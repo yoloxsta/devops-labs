@@ -365,3 +365,11 @@ Test the stack against different Kubernetes versions (v1.22 - v1.35):
 ```bash
 k3d cluster delete devops-lab
 ```
+### kubectl autocomplete
+```
+sudo apt install bash-completion -y
+source /etc/bash_completion
+source <(kubectl completion bash)
+(Now try typing kubectl + TAB → you should see suggestions like get, describe, apply, etc.)
+
+```

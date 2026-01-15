@@ -371,5 +371,4 @@ sudo apt install bash-completion -y
 source /etc/bash_completion
 source <(kubectl completion bash)
 (Now try typing kubectl + TAB → you should see suggestions like get, describe, apply, etc.)
-
 ```

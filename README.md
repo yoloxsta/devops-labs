@@ -2,7 +2,7 @@
 
 A complete local DevOps lab featuring k3d, ArgoCD, Prometheus, Grafana, Jenkins, and a 3-tier demo application with full observability.
 
-## ⚠️ Resource Requirements
+## Resource Requirements
 
 > **Warning**: This lab runs multiple services and can be resource-intensive!
 

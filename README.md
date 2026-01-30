@@ -372,3 +372,40 @@ source /etc/bash_completion
 source <(kubectl completion bash)
 (Now try typing kubectl + TAB → you should see suggestions like get, describe, apply, etc.)
 ```
+### build-push-azurepipeline
+```
+trigger:
+- master
+
+pool:
+  name: Default
+  demands:
+    - Agent.Name -equals ubuntu-arm64-agent-02
+
+# Link variable group and define pipeline variables
+variables:
+- group: devops-lab  # This links your variable group
+- name: IMAGE_NAME
+  value: cracky-app
+- name: IMAGE_TAG
+  value: $(Build.BuildId)
+
+steps:
+# Step 1: Login to Docker Hub
+- script: |
+    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+  displayName: 'Login to Docker Hub'
+  env:
+    DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+    DOCKERHUB_PASSWORD: $(DOCKERHUB_PASSWORD)
+
+# Step 2: Build Docker image with build ID tag only
+- script: |
+    docker build -t "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG" .
+  displayName: 'Build Docker image'
+
+# Step 3: Push Docker image to Docker Hub (only the build ID tag)
+- script: |
+    docker push "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
+  displayName: 'Push Docker image to Docker Hub'
+```

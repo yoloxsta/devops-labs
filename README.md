@@ -409,3 +409,70 @@ steps:
     docker push "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
   displayName: 'Push Docker image to Docker Hub'
 ```
+### build-push-update(manifest)
+```
+trigger:
+- master
+
+pool:
+  name: Default
+  demands:
+    - Agent.Name -equals ubuntu-arm64-agent-02
+
+variables:
+- group: devops-lab
+- name: IMAGE_NAME
+  value: cracky-app
+- name: IMAGE_TAG
+  value: $(Build.BuildId)
+
+steps:
+# Step 1: Login to Docker Hub
+- script: |
+    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+  displayName: 'Login to Docker Hub'
+  env:
+    DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+    DOCKERHUB_PASSWORD: $(DOCKERHUB_PASSWORD)
+
+# Step 2: Build and push Docker image
+- script: |
+    docker build -t "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG" .
+    docker push "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
+  displayName: 'Build and push Docker image'
+
+# Step 3: Update deployment file and commit (using PAT)
+- script: |
+    # Update the deployment file
+    sed -i "s|image: $DOCKERHUB_USERNAME/$IMAGE_NAME:[0-9.]*|image: $DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG|g" k8s/example-deployment.yml
+    
+    # Configure git
+    git config user.email "azure-pipelines@devops-lab.com"
+    git config user.name "Azure Pipeline"
+    
+    # Add and commit with [skip ci] to prevent re-trigger
+    git add k8s/example-deployment.yml
+    git commit -m "Auto-update: Update image tag to $IMAGE_TAG [skip ci]"
+    
+    # Push using PAT
+    git remote set-url origin https://$(GIT_USERNAME):$(GIT_PAT)@dev.azure.com/soetintaung/devops-lab/_git/devops-lab
+    git push origin HEAD:master
+  displayName: 'Update deployment and push to Git'
+  env:
+    DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+    IMAGE_NAME: $(IMAGE_NAME)
+    IMAGE_TAG: $(IMAGE_TAG)
+    GIT_PAT: $(GIT_PAT)
+    GIT_USERNAME: $(AZURE_DEVOPS_USERNAME)
+====
+# env Library
+
+AZURE_DEVOPS_USERNAME
+****
+DOCKERHUB_PASSWORD
+********
+DOCKERHUB_USERNAME
+***
+GIT_PAT
+********
+```

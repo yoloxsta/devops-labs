@@ -476,3 +476,63 @@ DOCKERHUB_USERNAME
 GIT_PAT
 ********
 ```
+### build-push-update (update manifest on separate repo)
+```
+trigger:
+- master
+
+pool:
+  name: Default
+  demands:
+    - Agent.Name -equals ubuntu-arm64-agent-02
+
+variables:
+- group: devops-lab
+- name: IMAGE_NAME
+  value: cracky-app
+- name: IMAGE_TAG
+  value: $(Build.BuildId)
+
+steps:
+# Step 1: Login to Docker Hub
+- script: |
+    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+  displayName: 'Login to Docker Hub'
+  env:
+    DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+    DOCKERHUB_PASSWORD: $(DOCKERHUB_PASSWORD)
+
+# Step 2: Build and push Docker image
+- script: |
+    docker build -t "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG" .
+    docker push "$DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
+  displayName: 'Build and push Docker image'
+
+# Step 3: Update separate k8s repository
+- script: |
+    # Clone k8s repo using HTTPS with PAT
+    git clone https://$(AZURE_DEVOPS_USERNAME):$(GIT_PAT)@dev.azure.com/soetintaung/devops-lab/_git/k8s k8s-repo
+    cd k8s-repo
+    
+    # Checkout main branch
+    git checkout main
+    
+    # Update deployment file
+    sed -i "s|image: $DOCKERHUB_USERNAME/$IMAGE_NAME:[0-9.]*|image: $DOCKERHUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG|g" example-deployment.yml
+    
+    # Configure git
+    git config user.email "azure-pipelines@devops-lab.com"
+    git config user.name "Azure Pipeline"
+    
+    # Add, commit and push
+    git add example-deployment.yml
+    git commit -m "Auto-update: Update image tag to $IMAGE_TAG"
+    git push origin main
+  displayName: 'Update k8s repository'
+  env:
+    DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+    IMAGE_NAME: $(IMAGE_NAME)
+    IMAGE_TAG: $(IMAGE_TAG)
+    AZURE_DEVOPS_USERNAME: $(AZURE_DEVOPS_USERNAME)  # Your Azure DevOps username
+    GIT_PAT: $(GIT_PAT)  # Your Personal Access Token
+```

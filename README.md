@@ -536,3 +536,316 @@ steps:
     AZURE_DEVOPS_USERNAME: $(AZURE_DEVOPS_USERNAME)  # Your Azure DevOps username
     GIT_PAT: $(GIT_PAT)  # Your Personal Access Token
 ```
+## TLS
+```
+ENTERPRISE TLS CERT → KEY VAULT → AKS
+
+FULL STEP-BY-STEP (FROM START)
+
+🧠 FINAL FLOW (READ FIRST)
+Domain (mybank.com)
+   |
+   v
+Certificate Authority (DigiCert / GlobalSign)
+   |
+   v
+Signed TLS Certificate
+   |
+   v
+Azure Key Vault (private key stays here 🔐)
+   |
+   v
+AKS (Managed Identity)
+   |
+   v
+CSI Driver
+   |
+   v
+Kubernetes TLS Secret
+   |
+   v
+Ingress Controller
+   |
+   v
+HTTPS 🔒
+
+PART 0️⃣ – WHAT YOU NEED BEFORE ANYTHING
+
+✔ A real domain (example: mybank.com)
+✔ Access to DNS (Azure DNS / Route53 / Cloudflare)
+✔ Account with a Certificate Authority (CA)
+✔ Azure subscription
+✔ AKS cluster running
+✔ Azure Key Vault created
+
+PART 1️⃣ – BUY CERTIFICATE (CA SIDE)
+STEP 1️⃣ Choose Certificate Authority (CA)
+
+Common enterprise CAs:
+
+DigiCert
+
+GlobalSign
+
+Sectigo
+
+Choose certificate type:
+
+OV (Organization Validation) – common
+
+EV – very strict (banks)
+
+STEP 2️⃣ Decide Certificate Details
+
+You must know:
+
+Domain: mybank.com
+
+SANs: www.mybank.com, api.mybank.com
+
+Validity: 1 year
+
+Key: RSA 2048 / 4096
+
+📌 Do NOT generate key locally
+Azure Key Vault will do it securely.
+
+PART 2️⃣ – GENERATE CSR IN AZURE KEY VAULT (UI)
+STEP 3️⃣ Create Certificate (CSR MODE)
+
+Azure Portal → Key Vault
+
+Open your vault
+
+Click Certificates
+
+Click + Generate / Import
+
+Choose Generate
+
+Fill form:
+
+Certificate Name
+
+prod-mybank-cert
+
+
+Certificate Authority
+
+Certificate issued by a non-integrated CA
+
+
+Subject
+
+CN=mybank.com
+
+
+Subject Alternative Names
+
+DNS: mybank.com
+DNS: www.mybank.com
+DNS: api.mybank.com
+
+
+Key Type
+
+RSA
+
+
+Key Size
+
+2048 or 4096
+
+
+Exportable private key
+
+NO ❌ (bank standard)
+
+
+Click Create
+
+WHAT HAPPENED HERE (IMPORTANT)
+
+✔ Private key generated inside Key Vault HSM/software
+✔ Private key never leaves Key Vault
+✔ CSR generated using that private key
+
+STEP 4️⃣ Download CSR (UI)
+
+Click prod-mybank-cert
+
+Click Certificate Operation
+
+Click Download CSR
+
+You now have:
+
+prod-mybank-cert.csr
+
+
+📌 CSR = public key + domain info
+❌ No private key
+
+PART 3️⃣ – CA SIGNS CERTIFICATE
+STEP 5️⃣ Submit CSR to CA
+
+In CA portal:
+
+Choose Request Certificate
+
+Upload / paste CSR
+
+Select cert type (OV/EV)
+
+Complete domain validation
+
+DNS record
+
+Email approval
+
+Org documents
+
+⏳ CA verifies → signs certificate
+
+STEP 6️⃣ Receive Signed Certificate
+
+CA gives:
+
+mybank.crt or .cer
+
+Intermediate chain (sometimes)
+
+📌 Still no private key
+(It’s already in Key Vault 🔐)
+
+PART 4️⃣ – MERGE CERT BACK TO KEY VAULT (UI)
+STEP 7️⃣ Merge Signed Certificate
+
+Azure Portal → Key Vault → Certificates
+
+Click prod-mybank-cert
+
+Click Merge Signed Request
+
+Upload .crt / .cer
+
+Click OK
+
+RESULT
+
+In Key Vault:
+
+Certificate status: Completed
+
+Issuer: DigiCert / GlobalSign
+
+Private key: 🔐 protected
+
+🎉 Production cert ready
+
+PART 5️⃣ – PREPARE AKS TO USE CERT
+STEP 8️⃣ Enable Managed Identity on AKS
+az aks update \
+  --resource-group myRG \
+  --name myAKS \
+  --enable-managed-identity
+
+
+Get identity ID:
+
+az aks show \
+  --resource-group myRG \
+  --name myAKS \
+  --query identity.principalId \
+  -o tsv
+
+STEP 9️⃣ Grant AKS Access to Key Vault
+az keyvault set-policy \
+  --name soe-kv-demo \
+  --object-id <AKS_PRINCIPAL_ID> \
+  --certificate-permissions get list \
+  --secret-permissions get list
+
+
+AKS is now trusted ✔
+
+PART 6️⃣ – INSTALL CSI DRIVER
+STEP 🔟 Install CSI Driver
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/main/deploy/rbac-secretproviderclass.yaml
+
+kubectl apply -f https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/main/deployment/provider-azure-installer.yaml
+
+PART 7️⃣ – CONNECT KEY VAULT → AKS
+STEP 1️⃣1️⃣ Create SecretProviderClass
+
+📄 spc-prod-cert.yaml
+
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: prod-cert
+spec:
+  provider: azure
+  secretObjects:
+  - secretName: tls-prod
+    type: kubernetes.io/tls
+    data:
+    - objectName: prod-mybank-cert
+      key: tls.crt
+    - objectName: prod-mybank-cert
+      key: tls.key
+  parameters:
+    useVMManagedIdentity: "true"
+    keyvaultName: soe-kv-demo
+    tenantId: <TENANT_ID>
+    objects: |
+      array:
+        - |
+          objectName: prod-mybank-cert
+          objectType: cert
+
+
+Apply:
+
+kubectl apply -f spc-prod-cert.yaml
+
+PART 8️⃣ – INGRESS USES CERT
+STEP 1️⃣2️⃣ Create Ingress
+tls:
+- hosts:
+  - mybank.com
+  secretName: tls-prod
+
+
+Ingress now:
+
+Reads Kubernetes TLS secret
+
+NGINX uses cert + key in memory
+
+PART 9️⃣ – HTTPS WORKS
+STEP 1️⃣3️⃣ Browser Access
+https://mybank.com
+
+
+🔒 Lock icon
+✔ CA trusted
+✔ Enterprise-grade HTTPS
+
+🔐 WHAT NEVER HAPPENED
+
+❌ No key files on laptop
+❌ No certs in Git
+❌ No SCP / SFTP
+❌ No passwords
+
+Everything was:
+✔ Identity-based
+✔ Audited
+✔ Secure
+
+🧠 FINAL ONE-LINER (BANK LEVEL)
+
+The private key is born in Key Vault, lives in Key Vault, and dies in Key Vault.
+AKS only borrows it securely when serving HTTPS.
+```
